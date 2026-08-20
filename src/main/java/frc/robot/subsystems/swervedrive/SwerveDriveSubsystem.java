@@ -10,6 +10,7 @@ import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import edu.wpi.first.math.util.Units;
+import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Voltage;
 
 import edu.wpi.first.wpilibj.Filesystem;
@@ -18,31 +19,26 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.robot.Constants.DrivebaseConstants;
 
 import java.io.File;
 import java.util.function.DoubleSupplier;
 import swervelib.parser.SwerveParser;
+import swervelib.parser.deserializer.ReflectionsManager.Gyro;
 import yams.mechanisms.config.SwerveDriveConfig;
 import yams.mechanisms.swerve.SwerveDrive;
 import yams.mechanisms.swerve.utility.SwerveInputStream;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
-
+import edu.wpi.first.wpilibj.ADXRS450_Gyro;
 import static edu.wpi.first.units.Units.*;
 
 public class SwerveDriveSubsystem extends SubsystemBase
 {
 
-  private SwerveDrive drive;
-  private static final String[] ModuleNames = {
-        "Front Left",
-        "Front Right",
-        "Back Left",
-        "Back Right"
-    };
-  
-
+  private SwerveDrive swerveDrive;
+  private final ADXRS450_Gyro gyro = new ADXRS450_Gyro();
   public SwerveDriveSubsystem()
   {
     var cfg = new SwerveDriveConfig()
@@ -50,10 +46,12 @@ public class SwerveDriveSubsystem extends SubsystemBase
         .withSubsystem(this)
         .withTelemetry(TelemetryVerbosity.HIGH)
         .withTranslationController(new PIDController(1.0, 0, 0)) // input: meters of position error
-        .withRotationController(new PIDController(1.0, 0, 0));   // input: radians of heading error
+        .withRotationController(new PIDController(1.0, 0, 0))   // input: radians of heading error
+        .withGyro(() -> Degrees.of(-gyro.getAngle()))
+        .withGyroInverted(false);
     try
     {
-      drive = new SwerveParser(new File(Filesystem.getDeployDirectory(), "swerve/base"))
+      swerveDrive = new SwerveParser(new File(Filesystem.getDeployDirectory(), "swerve/base"))
           .createSwerveDrive(cfg);
     } catch (Exception e)
     {
@@ -64,30 +62,29 @@ public class SwerveDriveSubsystem extends SubsystemBase
   public SwerveInputStream getAngularVelocityStream(DoubleSupplier x, DoubleSupplier y,
                                                     DoubleSupplier rot)
   {
-    return new SwerveInputStream(drive, x, y, rot);
+    return new SwerveInputStream(swerveDrive, x, y, rot);
   }
-
-  public Command drive(SwerveInputStream stream)
+  public Command driveRobotRelative(SwerveInputStream stream)
   {
-    return drive.drive(() -> ChassisSpeeds.fromFieldRelativeSpeeds(stream.get(),
-                                                                   new Rotation2d(drive.getGyroAngle())));
+    return swerveDrive.drive(() -> ChassisSpeeds.fromRobotRelativeSpeeds(stream.get(),
+                                                                   new Rotation2d(swerveDrive.getGyroAngle())));
   }
 
   /** Zero the gyro heading. Bind this to a button combo for field recovery. */
   public Command zeroGyro()
   {
-    return runOnce(() -> drive.zeroGyro());
+    return runOnce(() -> swerveDrive.zeroGyro());
   }
 
   public Command driveToPose(Pose2d pose) {
-  return drive.driveToPose(pose)
-      .until(() -> drive.getDistanceFromPose(pose).in(Meters) < 0.1
-                && Math.abs(drive.getAngleDifferenceFromPose(pose).in(Degrees)) < 2);
+  return swerveDrive.driveToPose(pose)
+      .until(() -> swerveDrive.getDistanceFromPose(pose).in(Meters) < 0.1
+                && Math.abs(swerveDrive.getAngleDifferenceFromPose(pose).in(Degrees)) < 2);
 }
 
   // Andar 2 metros para frente
     public Command driveForward2m() {
-    Pose2d currentPose = drive.getPose();
+    Pose2d currentPose = swerveDrive.getPose();
     Pose2d targetPose = new Pose2d(
         currentPose.getX() + 2.0,
         currentPose.getY(),
@@ -97,7 +94,7 @@ public class SwerveDriveSubsystem extends SubsystemBase
 }
   // Girar 90 graus
     public Command rotate90() {
-    Pose2d currentPose = drive.getPose();
+    Pose2d currentPose = swerveDrive.getPose();
     Pose2d targetPose = new Pose2d(
         currentPose.getTranslation(),
         currentPose.getRotation().plus(
@@ -108,11 +105,11 @@ public class SwerveDriveSubsystem extends SubsystemBase
 }
 
   public void resetOdometry(Pose2d pose) {
-    drive.resetOdometry(pose);
+    swerveDrive.resetOdometry(pose);
   }
   private Field2d field = new Field2d();
    private void updateDashboardField() {
-    Pose2d robotPose = drive.getPose();
+    Pose2d robotPose = swerveDrive.getPose();
 
     field.setRobotPose(robotPose);
     SmartDashboard.putData("Fieldlegal", field);
@@ -122,26 +119,29 @@ public class SwerveDriveSubsystem extends SubsystemBase
 
   @Override
     public void periodic() {
-    updateDashboardField();
-    drive.updateTelemetry();
-    
-    Pose2d pose = drive.getPose();
+      updateDashboardField();
+      swerveDrive.updateTelemetry();
+      
+      Pose2d pose = swerveDrive.getPose();
 
-    SmartDashboard.putNumber(
-        "Pose Rotation",
-        pose.getRotation().getDegrees()
-    );
+      SmartDashboard.putNumber(
+          "Pose Rotation",
+          pose.getRotation().getDegrees()
+      );
 
-    SmartDashboard.putNumber(
-        "Pose X",
-        pose.getX()
-    );
+      SmartDashboard.putNumber(
+          "Pose X",
+          pose.getX()
+      );
 
-    SmartDashboard.putNumber(
-        "Pose Y",
-        pose.getY()
-    );
+      SmartDashboard.putNumber(
+          "Pose Y",
+          pose.getY()
+      );
+    }
 
+    public void simulationPeriodic() {
+      swerveDrive.simIterate();
     }
 } 
   /**)

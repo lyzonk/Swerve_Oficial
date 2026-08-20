@@ -20,7 +20,7 @@
     "channel": 0,
     "canbus": "rio"
   },
-  "absoluteEncoderOffset": 163.3,
+  "absoluteEncoderOffset": 327.4,
   "absoluteEncoderInverted": false,
   "location": {
     "front": 10.25,
