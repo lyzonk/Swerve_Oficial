@@ -4,6 +4,7 @@
 
 package frc.robot;
 
+import edu.wpi.first.wpilibj.DataLogManager;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj.Timer;
@@ -53,6 +54,9 @@ public class Robot extends TimedRobot
     {
       DriverStation.silenceJoystickConnectionWarning(true);
     }
+
+    DataLogManager.start();
+    DriverStation.startDataLog(DataLogManager.getLog()); // optional: also logs joystick/DS data
 
     System.out.println("NT Instance = " +
     edu.wpi.first.networktables.NetworkTableInstance.getDefault());

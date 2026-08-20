@@ -1,10 +1,12 @@
 {
-  "imu": {
-    "type": "adxrs450",
+  "$schema": "https://config.yagsl.com/schemas/swervedrive.json",
+  "gyro": {
+    "type": "canandgyro_can",
     "id": 0,
     "canbus": "rio"
   },
-  "invertedIMU": true,
+  "gyroAxis": "yaw",
+  "gyroInvert": true,
   "modules": [
     "frontleft.json",
     "frontright.json",
@@ -12,4 +14,3 @@
     "backright.json"
   ]
 }
-

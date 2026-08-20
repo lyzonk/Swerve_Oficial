@@ -3,6 +3,7 @@ package frc.robot.subsystems.swervedrive;
 
 import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.controller.ProfiledPIDController;
+import edu.wpi.first.math.controller.SimpleMotorFeedforward;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
@@ -18,121 +19,72 @@ import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
+import frc.robot.Constants.DrivebaseConstants;
 
 import java.io.File;
 import java.util.function.DoubleSupplier;
-
 import swervelib.parser.SwerveParser;
-import swervelib.parser.json.ModuleJson;
-import swervelib.SwerveInputStream;
-import swervelib.SwerveModule;
-import swervelib.SwerveDrive;
-import swervelib.telemetry.SwerveDriveTelemetry;
-import swervelib.telemetry.SwerveDriveTelemetry.TelemetryVerbosity;
+import yams.mechanisms.config.SwerveDriveConfig;
+import yams.mechanisms.swerve.SwerveDrive;
+import yams.mechanisms.swerve.utility.SwerveInputStream;
+import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
 
 import static edu.wpi.first.units.Units.*;
 
 public class SwerveDriveSubsystem extends SubsystemBase
 {
-    
-    private SwerveDrive drive;
-    double MAX_SPEED = Units.feetToMeters(4);
-    File directory = new File(Filesystem.getDeployDirectory(),"swerve/base");
-     private static final String[] ModuleNames = {
+
+  private SwerveDrive drive;
+  private static final String[] ModuleNames = {
         "Front Left",
         "Front Right",
         "Back Left",
         "Back Right"
     };
   
-    public SwerveDriveSubsystem() {
 
+  public SwerveDriveSubsystem()
+  {
+    var cfg = new SwerveDriveConfig()
+        .withStartingPose(new Pose2d(0, 0, Rotation2d.kZero))
+        .withSubsystem(this)
+        .withTelemetry(TelemetryVerbosity.HIGH)
+        .withTranslationController(new PIDController(1.0, 0, 0)) // input: meters of position error
+        .withRotationController(new PIDController(1.0, 0, 0));   // input: radians of heading error
     try
     {
-    drive = new SwerveParser(directory).createSwerveDrive(MAX_SPEED, new Pose2d(new Translation2d(Meters.of(1),Meters.of(4)),Rotation2d.fromDegrees(0)));
-
+      drive = new SwerveParser(new File(Filesystem.getDeployDirectory(), "swerve/base"))
+          .createSwerveDrive(cfg);
     } catch (Exception e)
     {
-      System.out.println("Error creating swerve drive");
-      System.out.println(e);
       throw new RuntimeException(e);
     }
-     SwerveDriveTelemetry.verbosity = TelemetryVerbosity.HIGH;
   }
 
-  public SwerveInputStream getDriveInput(DoubleSupplier x, DoubleSupplier y, DoubleSupplier rot)
+  public SwerveInputStream getAngularVelocityStream(DoubleSupplier x, DoubleSupplier y,
+                                                    DoubleSupplier rot)
   {
-    return new SwerveInputStream(drive, x, y, rot).deadband(0.1);
+    return new SwerveInputStream(drive, x, y, rot);
   }
 
- public Command drive(SwerveInputStream stream)
-{
-    return Commands.run(
-        () -> {
-            ChassisSpeeds speeds = stream.get();
+  public Command drive(SwerveInputStream stream)
+  {
+    return drive.drive(() -> ChassisSpeeds.fromFieldRelativeSpeeds(stream.get(),
+                                                                   new Rotation2d(drive.getGyroAngle())));
+  }
 
-            drive.drive(
-                new Translation2d(
-                    speeds.vxMetersPerSecond,
-                    speeds.vyMetersPerSecond
-                ),
-                speeds.omegaRadiansPerSecond,
-                true,
-                false
-            );
-        },
-        this
-    );
+  /** Zero the gyro heading. Bind this to a button combo for field recovery. */
+  public Command zeroGyro()
+  {
+    return runOnce(() -> drive.zeroGyro());
+  }
+
+  public Command driveToPose(Pose2d pose) {
+  return drive.driveToPose(pose)
+      .until(() -> drive.getDistanceFromPose(pose).in(Meters) < 0.1
+                && Math.abs(drive.getAngleDifferenceFromPose(pose).in(Degrees)) < 2);
 }
-  
-  public Command driveToPose(Pose2d targetPose) {
 
-    ProfiledPIDController translationPID =
-        new ProfiledPIDController(
-            2,
-            0.0,
-            0.0,
-            new TrapezoidProfile.Constraints(2.0, 3.0)
-        );
-
-    ProfiledPIDController rotationPID =
-        new ProfiledPIDController(
-            2,
-            0.0,
-            0.0,
-            new TrapezoidProfile.Constraints(2.0, 3.0)
-        );
-
-    rotationPID.enableContinuousInput(-Math.PI, Math.PI);
-
-    SwerveInputStream stream =
-        new SwerveInputStream(
-            drive,
-            () -> 0.0,
-            () -> 0.0,
-            () -> 0.0
-        )
-        .driveToPose(
-            () -> targetPose,
-            translationPID,
-            rotationPID
-        )
-        .driveToPoseEnabled(true);
-
-    return Commands.run(
-        () -> drive.drive(stream.get()),
-        this
-    )
-    .until(() -> stream.atTargetPose(0.10))
-    .finallyDo(() ->
-        drive.drive(
-            new Translation2d(),
-            0.0,
-            false,
-            false
-        )
-    );
-}
   // Andar 2 metros para frente
     public Command driveForward2m() {
     Pose2d currentPose = drive.getPose();
@@ -171,48 +123,9 @@ public class SwerveDriveSubsystem extends SubsystemBase
   @Override
     public void periodic() {
     updateDashboardField();
-    drive.updateOdometry();
+    drive.updateTelemetry();
+    
     Pose2d pose = drive.getPose();
-
-    SwerveModule[] modules = drive.getModules();
-
-   for (int i = 0; i < Math.min(modules.length, ModuleNames.length); i++) {
-
-    SmartDashboard.putNumber(
-        ModuleNames [i] + " Speed",
-        modules[i].getState().speedMetersPerSecond
-    );
-
-    SmartDashboard.putNumber(
-        ModuleNames [i] + " Angle",
-        modules[i].getState().angle.getDegrees()
-    );
-
-    SmartDashboard.putNumber(
-        ModuleNames [i] + " Voltage",
-        modules[i].getDriveMotor().getVoltage()
-    );
-}
-
-    drive.getSimulationDriveTrainPose().ifPresent(simPose -> {
-
-     SmartDashboard.putNumber("Sim X", simPose.getX());
-     SmartDashboard.putNumber("Sim Y", simPose.getY());
-     SmartDashboard.putNumber(
-     "Sim Rotation",
-     simPose.getRotation().getDegrees()
-    ); });
-
-    SmartDashboard.putString(
-        "Robot Pose",
-        pose.toString()
-    );
-
-
-    SmartDashboard.putNumber(
-        "Gyro Angle",
-        drive.getOdometryHeading().getDegrees()
-    );
 
     SmartDashboard.putNumber(
         "Pose Rotation",
